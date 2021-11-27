@@ -116,12 +116,12 @@ def check_generated_box():
             ppos = pos.strip().split(' ')
             rrpos = rpos.strip().split(' ')
             if len(vval) != len(llab) or len(llab) != len(ppos) or len(ppos) != len(rrpos):
-                print case
-                print val
-                print len(vval)
-                print len(llab)
-                print len(ppos)
-                print len(rrpos)
+                print(case)
+                print(val)
+                print(len(vval))
+                print(len(llab))
+                print(len(ppos))
+                print(len(rrpos))
             assert len(vval) == len(llab)
             assert len(llab) == len(ppos)
             assert len(ppos) == len(rrpos)

@@ -5,7 +5,8 @@
 
 import sys
 import os
-import tensorflow as tf
+import jittor as jt
+import argparse
 import time
 from SeqUnit import *
 from DataLoader import DataLoader
@@ -13,47 +14,49 @@ import numpy as np
 from PythonROUGE import PythonROUGE
 from nltk.translate.bleu_score import corpus_bleu, SmoothingFunction
 from preprocess import *
-from util import * 
+from util import *
 
-tf.app.flags.DEFINE_integer("hidden_size", 500, "Size of each layer.")
-tf.app.flags.DEFINE_integer("emb_size", 400, "Size of embedding.")
-tf.app.flags.DEFINE_integer("field_size", 50, "Size of embedding.")
-tf.app.flags.DEFINE_integer("pos_size", 5, "Size of embedding.")
-tf.app.flags.DEFINE_integer("batch_size", 32, "Batch size of train set.")
-tf.app.flags.DEFINE_integer("epoch", 50, "Number of training epoch.")
-tf.app.flags.DEFINE_integer("source_vocab", 20003,'vocabulary size')
-tf.app.flags.DEFINE_integer("field_vocab", 1480,'vocabulary size')
-tf.app.flags.DEFINE_integer("position_vocab", 31,'vocabulary size')
-tf.app.flags.DEFINE_integer("target_vocab", 20003,'vocabulary size')
-tf.app.flags.DEFINE_integer("report", 5000,'report valid results after some steps')
-tf.app.flags.DEFINE_float("learning_rate", 0.0003,'learning rate')
+parser = argparse.ArgumentParser()
 
-tf.app.flags.DEFINE_string("mode",'train','train or test')
-tf.app.flags.DEFINE_string("load",'0','load directory') # BBBBBESTOFAll
-tf.app.flags.DEFINE_string("dir",'processed_data','data set directory')
-tf.app.flags.DEFINE_integer("limits", 0,'max data set size')
+parser.add_argument("--hidden_size", type=int, default=500, help="Size of each layer.")
+parser.add_argument("--emb_size", type=int, default=400, help="Size of embedding.")
+parser.add_argument("--field_size", type=int, default=50, help="Size of embedding.")
+parser.add_argument("--pos_size", type=int, default=5, help="Size of embedding.")
+parser.add_argument("--batch_size", type=int, default=32, help="Batch size of train set.")
+parser.add_argument("--epoch", type=int, default=50, help="Number of training epoch.")
+parser.add_argument("--source_vocab", type=int, default=20003, help="vocabulary size.")
+parser.add_argument("--field_vocab", type=int, default=1480, help="vocabulary size.")
+parser.add_argument("--position_vocab", type=int, default=31, help="vocabulary size.")
+parser.add_argument("--target_vocab", type=int, default=20003, help="vocabulary size.")
+parser.add_argument("--report", type=int, default=5000, help="report valid results after some steps.")
+parser.add_argument("--learning_rate", type=float, default=0.0003, help="learning rate.")
 
+parser.add_argument('--mode', type=str, default='train', help='train or test')
+parser.add_argument('--load', type=str, default='0', help='load directory')
+parser.add_argument('--dir', type=str, default='processed_data', help='data set directory')
+parser.add_argument('--limits', type=int, default=0, help='max data set size')
 
-tf.app.flags.DEFINE_boolean("dual_attention", True,'dual attention layer or normal attention')
-tf.app.flags.DEFINE_boolean("fgate_encoder", True,'add field gate in encoder lstm')
+parser.add_argument("--dual_attention", type=bool, default=False, help='dual attention layer or normal attention')
+parser.add_argument("--fgate_encoder", type=bool, default=True, help='add field gate in encoder lstm')
 
-tf.app.flags.DEFINE_boolean("field", False,'concat field information to word embedding')
-tf.app.flags.DEFINE_boolean("position", False,'concat position information to word embedding')
-tf.app.flags.DEFINE_boolean("encoder_pos", True,'position information in field-gated encoder')
-tf.app.flags.DEFINE_boolean("decoder_pos", True,'position information in dual attention decoder')
+parser.add_argument("--field", type=bool, default=False, help='concat field information to word embedding')
+parser.add_argument("--position", type=bool, default=False, help='concat position information to word embedding')
+parser.add_argument("--encoder_pos", type=bool, default=True, help='position information in field-gated encoder')
+parser.add_argument("--decoder_pos", type=bool, default=True, help='position information in dual attention decoder')
 
+args = parser.parse_args()
 
-FLAGS = tf.app.flags.FLAGS
+# FLAGS = tf.app.flags.FLAGS
 last_best = 0.0
 
 gold_path_test = 'processed_data/test/test_split_for_rouge/gold_summary_'
 gold_path_valid = 'processed_data/valid/valid_split_for_rouge/gold_summary_'
 
 # test phase
-if FLAGS.load != "0":
-    save_dir = 'results/res/' + FLAGS.load + '/'
+if args.load != "0":
+    save_dir = 'results/res/' + args.load + '/'
     save_file_dir = save_dir + 'files/'
-    pred_dir = 'results/evaluation/' + FLAGS.load + '/'
+    pred_dir = 'results/evaluation/' + args.load + '/'
     if not os.path.exists(pred_dir):
         os.mkdir(pred_dir)
     if not os.path.exists(save_file_dir):
@@ -77,31 +80,32 @@ else:
 log_file = save_dir + 'log.txt'
 
 
-def train(sess, dataloader, model):
+def train(dataloader, model):
+    model.train()
     write_log("#######################################################")
-    for flag in FLAGS.__flags:
-        write_log(flag + " = " + str(FLAGS.__flags[flag]))
+    for k in list(vars(args).keys()):
+        print('%s: %s' % (k, vars(args)[k]))
     write_log("#######################################################")
     trainset = dataloader.train_set
     k = 0
     loss, start_time = 0.0, time.time()
-    for _ in range(FLAGS.epoch):
-        for x in dataloader.batch_iter(trainset, FLAGS.batch_size, True):
-            loss += model(x, sess)
+    for _ in range(args.epoch):
+        for x in dataloader.batch_iter(trainset, args.batch_size, True):
+            loss += model(x)
             k += 1
-            progress_bar(k%FLAGS.report, FLAGS.report)
-            if (k % FLAGS.report == 0):
+            progress_bar(k%args.report, args.report)
+            if (k % args.report == 0):
                 cost_time = time.time() - start_time
-                write_log("%d : loss = %.3f, time = %.3f " % (k // FLAGS.report, loss, cost_time))
+                write_log("%d : loss = %.3f, time = %.3f " % (k // args.report, loss, cost_time))
                 loss, start_time = 0.0, time.time()
-                if k // FLAGS.report >= 1: 
-                    ksave_dir = save_model(model, save_dir, k // FLAGS.report)
-                    write_log(evaluate(sess, dataloader, model, ksave_dir, 'valid'))
+                if k // args.report >= 1:
+                    ksave_dir = save_model(model, save_dir, k // args.report)
+                    write_log(evaluate(dataloader, model, ksave_dir, 'valid'))
                     
 
 
-def test(sess, dataloader, model):
-    evaluate(sess, dataloader, model, save_dir, 'test')
+def test(dataloader, model):
+    evaluate(dataloader, model, save_dir, 'test')
 
 def save_model(model, save_dir, cnt):
     new_dir = save_dir + 'loads' + '/' 
@@ -113,7 +117,8 @@ def save_model(model, save_dir, cnt):
     model.save(nnew_dir)
     return nnew_dir
 
-def evaluate(sess, dataloader, model, ksave_dir, mode='valid'):
+def evaluate(dataloader, model, ksave_dir, mode='valid'):
+    model.eval()
     if mode == 'valid':
         # texts_path = "original_data/valid.summary"
         texts_path = "processed_data/valid/valid.box.val"
@@ -124,7 +129,7 @@ def evaluate(sess, dataloader, model, ksave_dir, mode='valid'):
         texts_path = "processed_data/test/test.box.val"
         gold_path = gold_path_test
         evalset = dataloader.test_set
-    
+
     # for copy words from the infoboxes
     texts = open(texts_path, 'r').read().strip().split('\n')
     texts = [list(t.strip().split()) for t in texts]
@@ -133,10 +138,10 @@ def evaluate(sess, dataloader, model, ksave_dir, mode='valid'):
     # with copy
     pred_list, pred_list_copy, gold_list = [], [], []
     pred_unk, pred_mask = [], []
-    
+
     k = 0
-    for x in dataloader.batch_iter(evalset, FLAGS.batch_size, False):
-        predictions, atts = model.generate(x, sess)
+    for x in dataloader.batch_iter(evalset, args.batch_size, False):
+        predictions, atts = model(x)
         atts = np.squeeze(atts)
         idx = 0
         for summary in np.array(predictions):
@@ -147,7 +152,7 @@ def evaluate(sess, dataloader, model, ksave_dir, mode='valid'):
                 real_sum, unk_sum, mask_sum = [], [], []
                 for tk, tid in enumerate(summary):
                     if tid == 3:
-                        sub = texts[k][np.argmax(atts[tk,: len(texts[k]),idx])]
+                        sub = texts[k][np.argmax(atts[tk, : len(texts[k]), idx])]
                         real_sum.append(sub)
                         mask_sum.append("**" + str(sub) + "**")
                     else:
@@ -163,7 +168,6 @@ def evaluate(sess, dataloader, model, ksave_dir, mode='valid'):
     write_word(pred_mask, ksave_dir, mode + "_summary_copy.txt")
     write_word(pred_unk, ksave_dir, mode + "_summary_unk.txt")
 
-
     for tk in range(k):
         with open(gold_path + str(tk), 'r') as g:
             gold_list.append([g.read().strip().split()])
@@ -174,7 +178,7 @@ def evaluate(sess, dataloader, model, ksave_dir, mode='valid'):
     recall, precision, F_measure = PythonROUGE(pred_set, gold_set, ngram_order=4)
     bleu = corpus_bleu(gold_list, pred_list)
     copy_result = "with copy F_measure: %s Recall: %s Precision: %s BLEU: %s\n" % \
-    (str(F_measure), str(recall), str(precision), str(bleu))
+                  (str(F_measure), str(recall), str(precision), str(bleu))
     # print copy_result
 
     for tk in range(k):
@@ -184,46 +188,43 @@ def evaluate(sess, dataloader, model, ksave_dir, mode='valid'):
     recall, precision, F_measure = PythonROUGE(pred_set, gold_set, ngram_order=4)
     bleu = corpus_bleu(gold_list, pred_unk)
     nocopy_result = "without copy F_measure: %s Recall: %s Precision: %s BLEU: %s\n" % \
-    (str(F_measure), str(recall), str(precision), str(bleu))
+                    (str(F_measure), str(recall), str(precision), str(bleu))
     # print nocopy_result
-    result = copy_result + nocopy_result 
+    result = copy_result + nocopy_result
     # print result
     if mode == 'valid':
-        print result
+        print(result)
 
     return result
 
 
-
 def write_log(s):
-    print s
+    print(s)
     with open(log_file, 'a') as f:
         f.write(s+'\n')
 
 
 def main():
-    config = tf.ConfigProto(allow_soft_placement=True)
-    config.gpu_options.allow_growth = True
-    with tf.Session(config=config) as sess:
-        copy_file(save_file_dir)
-        dataloader = DataLoader(FLAGS.dir, FLAGS.limits)
-        model = SeqUnit(batch_size=FLAGS.batch_size, hidden_size=FLAGS.hidden_size, emb_size=FLAGS.emb_size,
-                        field_size=FLAGS.field_size, pos_size=FLAGS.pos_size, field_vocab=FLAGS.field_vocab,
-                        source_vocab=FLAGS.source_vocab, position_vocab=FLAGS.position_vocab,
-                        target_vocab=FLAGS.target_vocab, scope_name="seq2seq", name="seq2seq",
-                        field_concat=FLAGS.field, position_concat=FLAGS.position,
-                        fgate_enc=FLAGS.fgate_encoder, dual_att=FLAGS.dual_attention, decoder_add_pos=FLAGS.decoder_pos,
-                        encoder_add_pos=FLAGS.encoder_pos, learning_rate=FLAGS.learning_rate)
-        sess.run(tf.global_variables_initializer())
-        # copy_file(save_file_dir)
-        if FLAGS.load != '0':
-            model.load(save_dir)
-        if FLAGS.mode == 'train':
-            train(sess, dataloader, model)
-        else:
-            test(sess, dataloader, model)
+
+    copy_file(save_file_dir)
+    dataloader = DataLoader(args.dir, args.limits)
+    model = SeqUnit(hidden_size=args.hidden_size, emb_size=args.emb_size,
+                    field_size=args.field_size, pos_size=args.pos_size, field_vocab=args.field_vocab,
+                    source_vocab=args.source_vocab, position_vocab=args.position_vocab,
+                    target_vocab=args.target_vocab, name="seq2seq",
+                    field_concat=args.field, position_concat=args.position,
+                    fgate_enc=args.fgate_encoder, dual_att=args.dual_attention, decoder_add_pos=args.decoder_pos,
+                    encoder_add_pos=args.encoder_pos, lr=args.learning_rate)
+    # copy_file(save_file_dir)
+    if args.load != '0':
+        model.load(save_dir)
+    if args.mode == 'train':
+        train(dataloader, model)
+    else:
+        test(dataloader, model)
 
 
 if __name__=='__main__':
     # with tf.device('/gpu:' + FLAGS.gpu):
+    print(np.version.version)
     main()
