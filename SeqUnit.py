@@ -47,7 +47,7 @@ class SeqUnit(Module):
             name: used when saving the model parameters
 
             start_token: default 2, used in the decoder stage
-            stop_token: default 2, used in the decoder stage
+            stop_token: default 2, used in the decoder stage (werid, the index of the stop_token should not be the same as the start_token)
             max_length: default 150, used in the decoder stage
 
 
@@ -92,7 +92,9 @@ class SeqUnit(Module):
         self.max_length = max_length
         # other parameters
         self.name = name
-        self.grad_clip = 5.0 # ? might be of no use
+        self.units = {}
+        self.params = {}
+        # self.grad_clip = 5.0 # ? might be of no use
             
         # network components related to encoder and decoder
         if self.fgate_enc:
@@ -106,23 +108,40 @@ class SeqUnit(Module):
         self.dec_lstm = LstmUnit(self.hidden_size, self.emb_size, "decoder_lstm")
         self.dec_out = OutputUnit(self.hidden_size, self.target_vocab, "decoder_output")
 
+        self.units.update({
+            'encoder_lstm': self.enc_lstm,
+            'decoder_lstm': self.dec_lstm,
+            'decoder_output': self.dec_out
+        })
          # network components related to attention units
         if self.dual_att:
             logging.info('dual attention mechanism used')
             self.att_layer = dualAttentionWrapper(self.hidden_size, self.hidden_size, self.field_attention_size, "attention")
+            self.units.update({'attention': self.att_layer})
             # remove the en_outputs parameter
         else:
             logging.info("normal attention used")
             self.att_layer = AttentionWrapper(self.hidden_size, self.hidden_size, "attention")
+            self.units.update({'attention': self.att_layer})
             # remove the en_outputs parameter
 
         # parameters of embedding matrices
-        self.word_embedding = nn.Embedding(self.source_vocab, self.emb_size)
+        self.word_embedding = nn.Embedding(self.source_vocab, self.emb_size) # self.embedding
+        # ??? alarming...there is a stop_grad() of the weight inside the implementation of embedding,
+        # therefore I am not sure whether this embedding will not be trained
+        
         if self.field_concat or self.fgate_enc or self.encoder_add_pos or self.decoder_add_pos:
-            self.field_embedding = nn.Embedding(self.field_vocab, self.field_size)
+            self.field_embedding = nn.Embedding(self.field_vocab, self.field_size) # self.fembedding
         if self.position_concat or self.encoder_add_pos or self.decoder_add_pos:
-            self.position_embedding = nn.Embedding(self.position_vocab, self.pos_size)
-            self.right_position_embedding = nn.Embedding(self.position_vocab, self.pos_size)
+            self.position_embedding = nn.Embedding(self.position_vocab, self.pos_size) # self.pembedding
+            self.right_position_embedding = nn.Embedding(self.position_vocab, self.pos_size) # self.rembedding
+
+        if self.field_concat or self.fgate_enc:
+            self.params.update({'fembedding': self.field_embedding})
+        if self.position_concat or self.encoder_add_pos or self.decoder_add_pos:
+            self.params.update({'pembedding': self.position_embedding})
+            self.params.update({'rembedding': self.right_position_embedding})
+        self.params.update({'embedding': self.word_embedding})
 
 
     def execute(self, batched_data):
@@ -260,7 +279,6 @@ class SeqUnit(Module):
         state = s_t # (shape (batch_size, hidden_size), shape (batch_size, hidden_size))
         return outputs, state
 
-
     def decoder_t(self, en_outputs, initial_state, inputs, inputs_len):
         # en_outputs, initial_state, inputs, inputs_len: en_outputs, en_state, self.decoder_embed, self.decoder_len
 
@@ -280,6 +298,7 @@ class SeqUnit(Module):
         finished = f0
         while not finished.all():
             o_t, s_t = self.dec_lstm(x_t, s_t, finished)
+            if dual_att:
             o_t, _ = self.att_layer(o_t, en_outputs) # add the en_outputs here
             o_t = self.dec_out(o_t, finished)
             emit_ta.append(o_t)
@@ -292,7 +311,6 @@ class SeqUnit(Module):
 
         state = s_t
         return outputs, state
-
 
     def decoder_g(self, en_outputs, initial_state):
         # initial_state (shape (batch_size, hidden_size), shape (batch_size, hidden_size))
@@ -320,7 +338,7 @@ class SeqUnit(Module):
             next_token, _ = jt.argmax(o_t, 1) # the jt.argmax will return a tuple indicating the index and the value
             x_t = self.word_embedding(next_token)
             finished = jt.bitwise_or(finished, (next_token == self.stop_token))
-            finished = jt.bitwise_or(finished, (t >= self.max_length))
+            finished = jt.bitwise_or(finished, (time >= self.max_length))
             time = time + 1
 
 
@@ -329,3 +347,16 @@ class SeqUnit(Module):
         pred_tokens = jt.argmax(outputs, 2)
         atts = jt.stack(att_ta, dim=0)
         return pred_tokens, atts
+
+    def save(self, path):
+        for u in self.units:
+            # call the save function of each unit
+            self.units[u].save(path + u + ".pkl")
+
+        jt.save(self.params, path + self.name + ".pkl")
+
+    def load(self, path):
+        for u in self.units:
+            self.units[u].load(path + u + ".pkl")
+        self.params = jt.load(path + self.name + ".pkl")
+
