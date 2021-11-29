@@ -113,24 +113,42 @@ class SeqUnit(Module):
         self.dec_lstm = LstmUnit(self.hidden_size, self.emb_size, "decoder_lstm")
         self.dec_out = OutputUnit(self.hidden_size, self.target_vocab, "decoder_output")
 
+        self.units.update({
+            'encoder_lstm': self.enc_lstm,
+            'decoder_lstm': self.dec_lstm,
+            'decoder_output': self.dec_out
+        })
+
         # network components related to attention units
         if self.dual_att:
             logging.info('dual attention mechanism used')
             self.att_layer = dualAttentionWrapper(self.hidden_size, self.hidden_size, self.field_attention_size,
                                                   "attention")
+            self.units.update({'attention': self.att_layer})
             # remove the en_outputs parameter
         else:
             logging.info("normal attention used")
             self.att_layer = AttentionWrapper(self.hidden_size, self.hidden_size, "attention")
+            self.units.update({'attention': self.att_layer})
             # remove the en_outputs parameter
 
         # parameters of embedding matrices
         self.word_embedding = nn.Embedding(self.source_vocab, self.emb_size)
+        # ??? alarming...there is a stop_grad() of the weight inside the implementation of embedding,
+        # therefore I am not sure whether this embedding will not be trained
+
         if self.field_concat or self.fgate_enc or self.encoder_add_pos or self.decoder_add_pos:
             self.field_embedding = nn.Embedding(self.field_vocab, self.field_size)
         if self.position_concat or self.encoder_add_pos or self.decoder_add_pos:
             self.position_embedding = nn.Embedding(self.position_vocab, self.pos_size)
             self.right_position_embedding = nn.Embedding(self.position_vocab, self.pos_size)
+
+        if self.field_concat or self.fgate_enc:
+            self.params.update({'fembedding': self.field_embedding})
+        if self.position_concat or self.encoder_add_pos or self.decoder_add_pos:
+            self.params.update({'pembedding': self.position_embedding})
+            self.params.update({'rembedding': self.right_position_embedding})
+        self.params.update({'embedding': self.word_embedding})
 
     def execute(self, batched_data):
         '''
