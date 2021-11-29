@@ -350,3 +350,15 @@ class SeqUnit(Module):
         pred_tokens = jt.argmax(outputs, 2)
         atts = jt.stack(att_ta, dim=0)
         return pred_tokens, atts
+
+    def save(self, path):
+        for u in self.units:
+            # call the save function of each unit
+            self.units[u].save(path + u + ".pkl")
+
+        jt.save(self.params, path + self.name + ".pkl")
+
+    def load(self, path):
+        for u in self.units:
+            self.units[u].load(path + u + ".pkl")
+        self.params = jt.load(path + self.name + ".pkl")
