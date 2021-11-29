@@ -193,6 +193,8 @@ class SeqUnit(Module):
                 # if we requires the field embedding is concatenated to the word embedding
                 encoder_embed = jt.concat([encoder_embed, field_embed],
                                           dim=2)  # (batchsize, max_text_len, emb_size + field_size)
+        
+        field_pos_embed = None
         if self.position_concat or self.encoder_add_pos or self.decoder_add_pos:
             pos_embed = self.position_embedding(encoder_pos)  # (batchsize, max_text_len, pos_size)
             rpos_embed = self.right_position_embedding(encoder_rpos)  # (batchsize, max_text_len, pos_size)
@@ -215,9 +217,8 @@ class SeqUnit(Module):
         # ======================================== decoder ======================================== #
         if self.is_training:
             # decoder for training
-            de_outputs, de_state = self.decoder_t(en_outputs, en_state, decoder_embed, decoder_len)
+            de_outputs, de_state = self.decoder_t(en_outputs, field_pos_embed, en_state, decoder_embed, decoder_len)
             de_outputs = jt.nn.softmax(de_outputs, dim=-1)
-
             loss = jt.nn.cross_entropy_loss
             ori_shape = decoder_output.shape
             de_outputs.view(-1, de_outputs.shape[-1])
@@ -231,7 +232,7 @@ class SeqUnit(Module):
             return mean_loss
         else:
             # decoder for testing
-            g_tokens, atts = self.decoder_g(en_state)
+            g_tokens, atts = self.decoder_g(en_outputs, field_pos_embed, en_state)
             return g_tokens, atts
 
     def encoder(self, inputs, inputs_len):
@@ -303,8 +304,8 @@ class SeqUnit(Module):
         state = s_t  # (shape (batch_size, hidden_size), shape (batch_size, hidden_size))
         return outputs, state
 
-    def decoder_t(self, en_outputs, initial_state, inputs, inputs_len):
-        # en_outputs, initial_state, inputs, inputs_len: en_outputs, en_state, self.decoder_embed, self.decoder_len
+    def decoder_t(self, en_outputs, field_inputs, initial_state, inputs, inputs_len):
+        # en_outputs, field_inputs, initial_state, inputs, inputs_len: en_outputs, field_pos_embed, en_state, self.decoder_embed, self.decoder_len
 
         batch_size = inputs.shape[0]
         max_time = inputs.shape[1]
@@ -322,7 +323,10 @@ class SeqUnit(Module):
         finished = f0
         while not finished.all():
             o_t, s_t = self.dec_lstm(x_t, s_t, finished)
-            o_t, _ = self.att_layer(o_t, en_outputs)  # add the en_outputs here
+            if self.dual_att:
+                o_t, _ = self.att_layer(o_t, en_outputs, field_inputs)  # add the en_outputs and field_inputs here
+            else:
+                o_t, _ = self.att_layer(o_t, en_outputs) # for ordinary attention units
             o_t = self.dec_out(o_t, finished)
             emit_ta.append(o_t)
             finished = time >= inputs_len
@@ -335,7 +339,7 @@ class SeqUnit(Module):
         state = s_t
         return outputs, state
 
-    def decoder_g(self, en_outputs, initial_state):
+    def decoder_g(self, en_outputs, field_inputs, initial_state):
         # initial_state (shape (batch_size, hidden_size), shape (batch_size, hidden_size))
         # different from the original code which uses the encoder_input, but should be equivalent
         batch_size = jt.shape(initial_state[0].shape)[0]
@@ -353,7 +357,10 @@ class SeqUnit(Module):
         finished = f0
         while not finished.all():
             o_t, s_t = self.dec_lstm(x_t, s_t, finished)
-            o_t, w_t = self.att_layer(o_t, en_outputs)  # add the en_outputs here
+            if self.dual_att:
+                o_t, w_t = self.att_layer(o_t, en_outputs, field_inputs)  # add the en_outputs and field_inputs here
+            else:
+                o_t, w_t = self.att_layer(o_t, en_outputs) # for ordinary attention units
             o_t = self.dec_out(o_t, finished)
             emit_ta.append(o_t)
             att_ta.append(w_t)
